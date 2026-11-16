@@ -1,0 +1,29 @@
+name: OpenTamin control plane canonical tests
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+    paths:
+      - deploy/**
+      - .github/workflows/opentamin-production.yml
+      - .github/workflows/opentamin-controller-test.yml
+permissions:
+  contents: read
+concurrency:
+  group: opentamin-controller-check-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    name: Owner-only T=0 release admission
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - run: node --test deploy/*.test.mjs && node --check deploy/opentamin.mjs && bash -n deploy/checkout-source.sh
