@@ -1,0 +1,50 @@
+name: OpenTamin Kit supply mirror
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+    paths:
+      - vendor/**
+      - .github/workflows/kit-mirror.yml
+  schedule:
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: opentamin-kit-mirror
+  cancel-in-progress: false
+jobs:
+  validate:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - run: node --test vendor/*.test.mjs
+      - run: node --check vendor/sync-kit.mjs
+  publish:
+    name: Verify and mirror into Open-Tamin release
+    needs: validate
+    if: github.ref == 'refs/heads/main' && github.repository == 'Open-Tamin/.github' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: kit-supply
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - run: node vendor/sync-kit.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
