@@ -32,8 +32,9 @@ export function admission({sourceCommit,source,live,githubRepository,githubRef,c
   if(source?.project!==CONFIG.project)reasons.push("source release project identity mismatch");
   if(source?.deployer?.repository!==CONFIG.owner || source?.deployer?.environment!==CONFIG.environment)
     reasons.push("release authority still external or not registered in Open-Tamin");
-  if(!Array.isArray(source?.workers)||source.workers.length!==CONFIG.workers.length)
-    reasons.push("Worker impact scope does not match owner contract");
+  const declaredWranglers=source?.workers?.map(w=>w.wrangler);
+  if(!Array.isArray(declaredWranglers) || JSON.stringify(declaredWranglers)!==JSON.stringify(CONFIG.wranglers))
+    reasons.push("Worker impact scope and release order differ from the owner contract");
   if(source?.state!=="ready")reasons.push("legacy release state is not proven READY; do not bootstrap a live Worker");
   if(live?.health?.status!==200 || live.health.json?.ok!==true)
     reasons.push("live independent monitor is not healthy; require verified recovery admission");
