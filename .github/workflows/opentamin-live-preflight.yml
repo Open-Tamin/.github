@@ -1,0 +1,38 @@
+name: OpenTamin live T0 read-only admission
+on:
+  push:
+    branches: [main]
+    paths:
+      - deploy/live-preflight.mjs
+      - .github/workflows/opentamin-live-preflight.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: opentamin-live-t0-audit
+  cancel-in-progress: false
+jobs:
+  preflight:
+    if: github.repository == 'Open-Tamin/.github' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: production-opentamin
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: "Read-only cloud admission: no deploy, migration or mutation"
+        run: node deploy/live-preflight.mjs
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: opentamin-t0-readonly-${{ github.run_id }}
+          path: evidence/live-preflight.json
+          if-no-files-found: error
+          retention-days: 90
