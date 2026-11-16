@@ -1,6 +1,7 @@
 // Read-only Cloudflare inventory: no write method, token never logged, errors fail closed.
 // Binds OpenTamin's exact Worker/D1/R2/zone before any production side effect.
-import { CONFIG } from "./opentamin.mjs";
+import { readFileSync } from "node:fs";
+const CONFIG=JSON.parse(readFileSync(new URL("./opentamin.json",import.meta.url),"utf8"));
 const ID=/^[a-fA-F0-9]{32}$/;
 const PREFIX="https://api.cloudflare.com/client/v4";
 const expected={
