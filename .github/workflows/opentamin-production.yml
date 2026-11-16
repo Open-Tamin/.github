@@ -1,0 +1,140 @@
+# The only production release control plane for OpenTamin.
+# All authority is Open-Tamin owned: private source, public reviewed controller, Cloudflare credentials.
+name: OpenTamin owned production
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: Reviewed production release / recovery decision
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: opentamin-production
+  cancel-in-progress: false
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main' && github.repository == 'Open-Tamin/.github'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: source-read
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      seal: ${{ steps.build.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - run: node --test deploy/*.test.mjs && bash -n deploy/checkout-source.sh
+      - id: source
+        name: Reviewed main SHA, read-only key unloaded before any source runtime
+        env:
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+        run: bash deploy/checkout-source.sh
+      - working-directory: source
+        run: npm ci
+      - name: Build once, seal before tests
+        id: build
+        working-directory: source
+        env:
+          KIT_RELEASE_ENVIRONMENT: production-opentamin
+          KIT_RELEASE_SOURCE_REPOSITORY: Open-Tamin/platform
+          KIT_RELEASE_SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: node scripts/kit.mjs release build
+      - name: Canonical pre-effect CI including private Kish routes
+        working-directory: source
+        run: npm test
+      - name: Real browser and token visual QA
+        working-directory: source
+        run: |
+          if [ -d node_modules/playwright ]; then npx --no-install playwright install --with-deps chromium; fi
+          node scripts/kit.mjs site visual-qa
+      - name: Package only tested sealed output
+        run: |
+          test -f source/.release/seal.json
+          test -d source/site
+          mkdir -p sealed/site sealed/.release
+          cp -a source/site/. sealed/site/
+          cp source/.release/seal.json sealed/.release/seal.json
+          cp source/release.json sealed/release.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: opentamin-sealed-${{ github.run_id }}
+          path: sealed/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+  production:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.repository == 'Open-Tamin/.github'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: production-opentamin
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - id: source
+        env:
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          TESTED_SHA: ${{ needs.build.outputs.sha }}
+        run: bash deploy/checkout-source.sh
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: opentamin-sealed-${{ github.run_id }}
+          path: sealed
+      - name: Source contract and tested sealed artifact must agree
+        run: |
+          cmp source/release.json sealed/release.json
+          test -d sealed/site
+          test -f sealed/.release/seal.json
+          test -n "${{ needs.build.outputs.seal }}"
+      - working-directory: source
+        run: npm ci --ignore-scripts
+      - name: T=0 read-only admission, ownership, inventory, health and recovery gates
+        env:
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          OPS_NOTIFY_TO: ${{ secrets.OPS_NOTIFY_TO }}
+          SOURCE_SHA: ${{ needs.build.outputs.sha }}
+        run: node deploy/opentamin.mjs admit source "$SOURCE_SHA"
+      - name: Install exact pretested, sealed file tree
+        run: |
+          mkdir -p source/site source/.release
+          cp -a sealed/site/. source/site/
+          cp sealed/.release/seal.json source/.release/seal.json
+      - name: Governed D1 migration, Cloudflare deployment and build SHA verification
+        working-directory: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KIT_RELEASE_ENVIRONMENT: production-opentamin
+          KIT_RELEASE_SOURCE_REPOSITORY: Open-Tamin/platform
+          KIT_RELEASE_SOURCE_SHA: ${{ needs.build.outputs.sha }}
+          SEAL_SHA256: ${{ needs.build.outputs.seal }}
+          KIT_RELEASE_SECRETS: ${{ toJSON(secrets) }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          OPS_NOTIFY_TO: ${{ secrets.OPS_NOTIFY_TO }}
+        run: node scripts/kit.mjs release ship
+      - name: Smoke exact deployed SHA, website, authenticated Kish, both TTF files
+        env:
+          SOURCE_SHA: ${{ needs.build.outputs.sha }}
+        run: node deploy/opentamin.mjs smoke "$SOURCE_SHA"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: opentamin-evidence-${{ github.run_id }}
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 90

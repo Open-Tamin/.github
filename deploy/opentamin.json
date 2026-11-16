@@ -1,0 +1,59 @@
+{
+  "schema": "opentamin.owner-release.v1",
+  "owner": "Open-Tamin/.github",
+  "source": "Open-Tamin/platform",
+  "branch": "main",
+  "project": "opentamin",
+  "environment": "production-opentamin",
+  "origin": "https://opentamin.com",
+  "contract": "release.json",
+  "workers": [
+    "opentamin-mail-sender",
+    "opentamin-comms-engine",
+    "opentamin-monitor",
+    "opentamin-web"
+  ],
+  "smoke": [
+    {
+      "id": "root",
+      "path": "/",
+      "status": 200
+    },
+    {
+      "id": "build",
+      "path": "/api/build",
+      "status": 200
+    },
+    {
+      "id": "health",
+      "path": "/api/health",
+      "status": 200
+    },
+    {
+      "id": "kish-unauth",
+      "path": "/kish/",
+      "status": 401
+    },
+    {
+      "id": "kish-js-unauth",
+      "path": "/kish/assets/client.js",
+      "status": 403
+    },
+    {
+      "id": "vazirmatn-regular",
+      "path": "/fonts/Vazirmatn-Regular.ttf",
+      "status": 200
+    },
+    {
+      "id": "vazirmatn-bold",
+      "path": "/fonts/Vazirmatn-Bold.ttf",
+      "status": 200
+    }
+  ],
+  "wranglers": [
+    "workers/mail-sender/wrangler.toml",
+    "workers/comms-engine/wrangler.toml",
+    "workers/monitor/wrangler.toml",
+    "wrangler.toml"
+  ]
+}
