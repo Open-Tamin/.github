@@ -4,6 +4,7 @@ import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { inspectCloudflare } from "./inventory.mjs";
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 export const CONFIG = JSON.parse(readFileSync(join(HERE,"opentamin.json"),"utf8"));
 const HEX40=/^[a-f0-9]{40}$/;
@@ -25,7 +26,7 @@ export async function inspectLive(fetcher=fetch) {
   ]);
   return {build,health,kish};
 }
-export function admission({sourceCommit,source,live,githubRepository,githubRef,capabilities}) {
+export function admission({sourceCommit,source,live,inventory,githubRepository,githubRef,capabilities}) {
   const reasons=[];
   if(githubRepository!==CONFIG.owner || githubRef!=="refs/heads/main")reasons.push("release authority must be owner main only");
   if(!HEX40.test(sourceCommit||""))reasons.push("source commit is not a full immutable SHA");
@@ -36,6 +37,8 @@ export function admission({sourceCommit,source,live,githubRepository,githubRef,c
   if(!Array.isArray(declaredWranglers) || JSON.stringify(declaredWranglers)!==JSON.stringify(CONFIG.wranglers))
     reasons.push("Worker impact scope and release order differ from the owner contract");
   if(source?.state!=="ready")reasons.push("legacy release state is not proven READY; do not bootstrap a live Worker");
+  if(inventory?.ok!==true || inventory.accountVerified!==true)
+    reasons.push("Cloudflare Worker/D1/R2/zone resources not verified as OpenTamin-owned");
   if(live?.health?.status!==200 || live.health.json?.ok!==true)
     reasons.push("live independent monitor is not healthy; require verified recovery admission");
   if(live?.build?.status!==200 || !HEX40.test(live.build.json?.commit||""))
@@ -50,8 +53,9 @@ export function admission({sourceCommit,source,live,githubRepository,githubRef,c
 export async function plan(sourceRoot,sourceCommit,options={}) {
   const release=JSON.parse(readFileSync(join(resolve(sourceRoot),"release.json"),"utf8"));
   const live=await inspectLive(options.fetcher);
+  const inventory=await inspectCloudflare(options.capabilities??process.env,options.inventoryFetcher??fetch);
   const result=admission({
-    sourceCommit,source:release,live,
+    sourceCommit,source:release,live,inventory,
     githubRepository:options.githubRepository??process.env.GITHUB_REPOSITORY,
     githubRef:options.githubRef??process.env.GITHUB_REF,
     capabilities:options.capabilities??process.env
@@ -63,7 +67,7 @@ export async function plan(sourceRoot,sourceCommit,options={}) {
     source:CONFIG.source,
     sourceCommit,
     releaseSha256:sha256(readFileSync(join(resolve(sourceRoot),"release.json"))),
-    live,
+    live,inventory,
     allowed:result.allowed,
     reasons:result.reasons
   };
