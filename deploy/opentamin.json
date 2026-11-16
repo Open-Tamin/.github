@@ -49,5 +49,11 @@
       "path": "/fonts/Vazirmatn-Bold.ttf",
       "status": 200
     }
+  ],
+  "wranglers": [
+    "workers/mail-sender/wrangler.toml",
+    "workers/comms-engine/wrangler.toml",
+    "workers/monitor/wrangler.toml",
+    "wrangler.toml"
   ]
 }
