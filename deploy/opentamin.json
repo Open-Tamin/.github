@@ -30,16 +30,6 @@
       "status": 200
     },
     {
-      "id": "kish-unauth",
-      "path": "/kish/",
-      "status": 401
-    },
-    {
-      "id": "kish-js-unauth",
-      "path": "/kish/assets/client.js",
-      "status": 403
-    },
-    {
       "id": "vazirmatn-regular",
       "path": "/fonts/Vazirmatn-Regular.ttf",
       "status": 200
@@ -55,5 +45,26 @@
     "workers/comms-engine/wrangler.toml",
     "workers/monitor/wrangler.toml",
     "wrangler.toml"
+  ],
+  "protectedSurfaces": [
+    {
+      "id": "kish",
+      "worker": "opentamin-kish-review",
+      "route": "opentamin.com/kish*",
+      "anonymous": {
+        "id": "kish-unauth",
+        "path": "/kish/",
+        "status": 200,
+        "contentType": "text/html",
+        "requiredInput": "password"
+      },
+      "protectedAssets": [
+        {
+          "id": "kish-js-unauth",
+          "path": "/kish/assets/client.js",
+          "status": 403
+        }
+      ]
+    }
   ]
 }

@@ -15,16 +15,41 @@ async function readUrl(url,fetcher) {
   const body=await res.text();
   let json=null;
   try { json=JSON.parse(body); } catch {}
-  return {status:res.status,json,contentType:res.headers.get("content-type"),length:body.length};
+  return {status:res.status,json,contentType:res.headers.get("content-type"),length:body.length,hasPasswordInput:body.includes('name="password"')};
 }
 export async function inspectLive(fetcher=fetch) {
   const origin=CONFIG.origin;
-  const [build,health,kish]=await Promise.all([
+  const [build,health,entries]=await Promise.all([
     readUrl(origin+"/api/build",fetcher),
     readUrl(origin+"/api/health",fetcher),
-    readUrl(origin+"/kish/",fetcher)
+    Promise.all((CONFIG.protectedSurfaces||[]).map(async s=>{
+      const [entry,assets]=await Promise.all([
+        readUrl(origin+s.anonymous.path,fetcher),
+        Promise.all(s.protectedAssets.map(async a=>[a.id,await readUrl(origin+a.path,fetcher)]))
+      ]);
+      return [s.id,{entry,assets:Object.fromEntries(assets)}];
+    }))
   ]);
-  return {build,health,kish};
+  return {build,health,protected:Object.fromEntries(entries)};
+}
+// One declarative, stakeholder-bound protected-surface contract governs both
+// pre-effect admission and post-effect smoke. No route-specific status in code.
+export function protectedProblems(live,inventory={}) {
+  const reasons=[];
+  for(const s of CONFIG.protectedSurfaces||[]){
+    const entry=live?.protected?.[s.id]?.entry;
+    if(entry?.status!==s.anonymous.status ||
+       !String(entry?.contentType||"").includes(s.anonymous.contentType) ||
+       (s.anonymous.requiredInput==="password"&&!entry?.hasPasswordInput))
+      reasons.push("protected surface "+s.id+" entry not proven as required password form");
+    for(const a of s.protectedAssets){
+      if(live?.protected?.[s.id]?.assets?.[a.id]?.status!==a.status)
+        reasons.push("protected surface "+s.id+" asset "+a.id+" not denied as declared");
+    }
+    if(inventory.routeMatched?.[s.id]!==true)
+      reasons.push("protected surface "+s.id+" route/Worker ownership not verified");
+  }
+  return reasons;
 }
 export function admission({sourceCommit,source,live,inventory,githubRepository,githubRef,capabilities}) {
   const reasons=[];
@@ -43,8 +68,7 @@ export function admission({sourceCommit,source,live,inventory,githubRepository,g
     reasons.push("live independent monitor is not healthy; require verified recovery admission");
   if(live?.build?.status!==200 || !HEX40.test(live.build.json?.commit||""))
     reasons.push("current production commit cannot be read and reconciled");
-  if(live?.kish?.status!==404 && live?.kish?.status!==401)
-    reasons.push("existing Kish route is not a known 404 or authenticated denial; inspect current route before mutation");
+  reasons.push(...protectedProblems(live,inventory));
   for(const cap of ["CLOUDFLARE_API_TOKEN","CLOUDFLARE_ACCOUNT_ID","OPS_NOTIFY_TO","SOURCE_DEPLOY_KEY"]) {
     if(!capabilities?.[cap])reasons.push("missing protected release capability "+cap);
   }
@@ -88,6 +112,18 @@ export async function smoke(sourceCommit,fetcher=fetch) {
       deny("deployed commit does not equal tested source HEAD");
     if(c.id==="health" && r.json?.ok!==true)
       deny("health response is not monitor-verified");
+  }
+  for(const s of CONFIG.protectedSurfaces||[]){
+    const entry=await readUrl(CONFIG.origin+s.anonymous.path,fetcher);
+    responses[s.anonymous.id]={path:s.anonymous.path,status:entry.status,contentType:entry.contentType};
+    if(entry.status!==s.anonymous.status||!String(entry.contentType||"").includes(s.anonymous.contentType)||
+       (s.anonymous.requiredInput==="password"&&!entry.hasPasswordInput))
+      deny("protected surface "+s.id+" login-form contract failed");
+    for(const asset of s.protectedAssets){
+      const r=await readUrl(CONFIG.origin+asset.path,fetcher);
+      responses[asset.id]={path:asset.path,status:r.status,contentType:r.contentType};
+      if(r.status!==asset.status)deny("protected surface "+s.id+" confidential asset is exposed");
+    }
   }
   return {schema:"opentamin.smoke.v1",sourceCommit,at:new Date().toISOString(),responses};
 }

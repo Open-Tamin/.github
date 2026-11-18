@@ -9,8 +9,8 @@ const source=()=>({
   deployer:{repository:"Open-Tamin/.github",environment:"production-opentamin"},
   workers:CONFIG.wranglers.map(wrangler=>({wrangler}))
 });
-const live=()=>({build:{status:200,json:{commit:"b".repeat(40)}},health:{status:200,json:{ok:true}},kish:{status:401}});
-const args=()=>({sourceCommit:sha,source:source(),live:live(),inventory:{ok:true,accountVerified:true},githubRepository:"Open-Tamin/.github",githubRef:"refs/heads/main",capabilities:caps});
+const live=()=>({build:{status:200,json:{commit:"b".repeat(40)}},health:{status:200,json:{ok:true}},protected:{kish:{entry:{status:200,contentType:"text/html; charset=utf-8",hasPasswordInput:true},assets:{"kish-js-unauth":{status:403}}}}});
+const args=()=>({sourceCommit:sha,source:source(),live:live(),inventory:{ok:true,accountVerified:true,routeMatched:{kish:true}},githubRepository:"Open-Tamin/.github",githubRef:"refs/heads/main",capabilities:caps});
 test("a complete owner-only, scoped, healthy T=0 receipt permits a release",()=>{
  assert.deepEqual(admission(args()),{allowed:true,reasons:[]});
 });
@@ -27,7 +27,7 @@ function mocked(url){
  const path=new URL(url).pathname;
  if(path==="/api/build")return new Response(JSON.stringify({commit:sha}),{status:200,headers:{"content-type":"application/json"}});
  if(path==="/api/health")return new Response(JSON.stringify({ok:true}),{status:200,headers:{"content-type":"application/json"}});
- if(path==="/kish/")return new Response("Denied",{status:401});
+ if(path==="/kish/")return new Response('<form><input name="password"></form>',{status:200,headers:{"content-type":"text/html; charset=utf-8"}});
  if(path==="/kish/assets/client.js")return new Response("Denied",{status:403});
  if(path==="/")return new Response("Landing",{status:200});
  if(path.startsWith("/fonts/"))return new Response("font",{status:200,headers:{"content-type":"font/ttf"}});
@@ -36,7 +36,7 @@ function mocked(url){
 test("post-production smoke binds all seven routes to exact tested SHA",async()=>{
  const doc=await smoke(sha,mocked);
  assert.equal(Object.keys(doc.responses).length,7);
- assert.equal(doc.responses["kish-unauth"].status,401);
+ assert.equal(doc.responses["kish-unauth"].status,200);
 });
 test("smoke denies an unverifiable build",async()=>{
  await assert.rejects(()=>smoke("b".repeat(40),mocked),/T=0 DENIED/);
@@ -44,7 +44,7 @@ test("smoke denies an unverifiable build",async()=>{
 test("read-only inventory includes build, health and denied Kish before any write",async()=>{
  const x=await inspectLive(mocked);
  assert.equal(x.health.json.ok,true);
- assert.equal(x.kish.status,401);
+ assert.equal(x.protected.kish.entry.status,200);
 });
 
 test("only read-only Cloudflare list operations can establish an owner resource receipt",async()=>{
@@ -53,17 +53,18 @@ test("only read-only Cloudflare list operations can establish an owner resource 
   calls.push({url,method:options.method});
   const path=new URL(url).pathname;
   let result;
-  if(path.endsWith("/workers/scripts"))result=CONFIG.workers.map(id=>({id}));
+  if(path.endsWith("/workers/scripts"))result=[...CONFIG.workers,...CONFIG.protectedSurfaces.map(s=>s.worker)].map(id=>({id}));
   else if(path.endsWith("/d1/database"))result=[{name:"opentamin-web"},{name:"opentamin-monitor"}];
   else if(path.endsWith("/r2/buckets"))result={buckets:[{name:"opentamin-backups"}]};
-  else if(path.endsWith("/zones"))result=[{name:"opentamin.com",account:{id:account}}];
+  else if(path.endsWith("/zones"))result=[{id:"b".repeat(32),name:"opentamin.com",account:{id:account}}];
+  else if(path.endsWith("/workers/routes"))result=CONFIG.protectedSurfaces.map(s=>({pattern:s.route,script:s.worker}));
   else throw Error("Unexpected inventory endpoint");
   return new Response(JSON.stringify({success:true,result}),{status:200,headers:{"content-type":"application/json"}});
  };
  const proof=await inspectCloudflare({CLOUDFLARE_API_TOKEN:"test-token",CLOUDFLARE_ACCOUNT_ID:account},mock);
  assert.equal(proof.ok,true);
  assert.equal(proof.accountVerified,true);
- assert.equal(calls.length,4);
+ assert.equal(calls.length,5);
  assert.ok(calls.every(x=>x.method==="GET"));
  assert.equal(JSON.stringify(proof).includes("test-token"),false);
 });
@@ -74,4 +75,13 @@ test("missing or cross-account Cloudflare inventory is a constitutional denial",
  const verdict=await inspectCloudflare({CLOUDFLARE_API_TOKEN:"test",CLOUDFLARE_ACCOUNT_ID:account},mock);
  assert.equal(verdict.ok,false);
  assert.ok(verdict.missing.workers.length>0);
+});
+
+test("one protected-surface contract fails closed on public assets, missing form or route drift",()=>{
+ const noForm=args();noForm.live.protected.kish.entry.hasPasswordInput=false;
+ assert.equal(admission(noForm).allowed,false);
+ const leaked=args();leaked.live.protected.kish.assets["kish-js-unauth"].status=200;
+ assert.equal(admission(leaked).allowed,false);
+ const moved=args();moved.inventory.routeMatched.kish=false;
+ assert.equal(admission(moved).allowed,false);
 });
